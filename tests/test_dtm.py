@@ -198,6 +198,138 @@ class TimeMachineTests(unittest.TestCase):
         authors = {a["author"] for a in s["by_author"]}
         self.assertEqual(authors, {"alice", "bob"})
 
+    def test_hash_chain_detects_tampering(self):
+        self.tm.exec_sql("CREATE TABLE p(id INTEGER PRIMARY KEY, v TEXT)", author="a", message="c")
+        self.tm.exec_sql("INSERT INTO p(v) VALUES('x')", author="a", message="add")
+        self.tm.exec_sql("UPDATE p SET v='y' WHERE id=1", author="a", message="edit")
+        self.assertTrue(self.tm.verify_integrity()["ok"])
+        # secretly rewrite history
+        self.tm.conn.execute("UPDATE _dtm_changes SET new_json='{\"id\":1,\"v\":\"EVIL\"}' WHERE change_id=1")
+        self.tm.conn.commit()
+        res = self.tm.verify_integrity()
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["broken_at"], 1)
+
+    def test_session_api(self):
+        self.tm.exec_sql("CREATE TABLE p(id INTEGER PRIMARY KEY, v INT)", author="a", message="c")
+        with self.tm.session(author="api", message="bulk") as cur:
+            cur.execute("INSERT INTO p(v) VALUES(1)")
+            cur.execute("INSERT INTO p(v) VALUES(2)")
+            cur.execute("UPDATE p SET v=99 WHERE id=1")
+        self.assertEqual(len(self.tm.query("SELECT * FROM p")), 2)
+        authors = {c["author"] for c in self.tm.log(table="p", limit=100)}
+        self.assertEqual(authors, {"api"})
+
+    def test_anomalies(self):
+        self.tm.exec_sql("CREATE TABLE p(id INTEGER PRIMARY KEY, v INT)", author="a", message="c")
+        self.tm.exec_sql("".join(f"INSERT INTO p(v) VALUES({i});" for i in range(8)),
+                         author="a", message="seed")
+        self.tm.exec_sql("DELETE FROM p", author="bad", message="wipe everything")
+        flags = self.tm.anomalies(threshold=5)
+        self.assertTrue(any(f["op"] == "DELETE" and f["rows_affected"] == 8 for f in flags))
+
+    def test_log_filters(self):
+        self.tm.exec_sql("CREATE TABLE p(id INTEGER PRIMARY KEY, v TEXT)", author="alice", message="c")
+        self.tm.exec_sql("INSERT INTO p(v) VALUES('a')", author="alice", message="add a")
+        self.tm.exec_sql("UPDATE p SET v='b' WHERE id=1", author="bob", message="edit")
+        self.assertEqual(len(self.tm.log(table="p", author="bob", limit=100)), 1)
+        self.assertEqual(len(self.tm.log(table="p", op="INSERT", limit=100)), 1)
+        self.assertEqual(len(self.tm.log(table="p", contains="edit", limit=100)), 1)
+
+    def test_diff_reports_changed_fields(self):
+        self.tm.exec_sql("CREATE TABLE p(id INTEGER PRIMARY KEY, a TEXT, b TEXT)", author="x", message="c")
+        self.tm.exec_sql("INSERT INTO p(a,b) VALUES('1','1')", author="x", message="add")
+        t1 = self._ts()
+        self.tm.exec_sql("UPDATE p SET a='2' WHERE id=1", author="x", message="edit a")
+        t2 = self._ts()
+        d = self.tm.diff("p", t1, t2)
+        self.assertEqual(d["changed"][0]["fields"], ["a"])
+
+    def test_branch_and_merge(self):
+        self.tm.exec_sql("CREATE TABLE p(id INTEGER PRIMARY KEY, name TEXT)", author="a", message="c")
+        self.tm.exec_sql("INSERT INTO p(name) VALUES('orig')", author="a", message="add")
+        path = self.tm.branch("feature", author="a")
+        self._tmp_extra = path
+        # change on the branch
+        fb = TimeMachine(path)
+        fb.exec_sql("UPDATE p SET name='changed' WHERE id=1", author="dev", message="rename")
+        fb.close()
+        res = self.tm.merge("feature", author="a")
+        self.assertEqual(res["applied"], 1)
+        self.assertEqual(len(res["conflicts"]), 0)
+        self.assertEqual(self.tm.query("SELECT name FROM p WHERE id=1")[0]["name"], "changed")
+        os.remove(path)
+
+    def test_merge_detects_conflict(self):
+        self.tm.exec_sql("CREATE TABLE p(id INTEGER PRIMARY KEY, name TEXT)", author="a", message="c")
+        self.tm.exec_sql("INSERT INTO p(name) VALUES('base')", author="a", message="add")
+        path = self.tm.branch("feature", author="a")
+        fb = TimeMachine(path)
+        fb.exec_sql("UPDATE p SET name='theirs' WHERE id=1", author="dev", message="branch edit")
+        fb.close()
+        # both sides change the same row differently
+        self.tm.exec_sql("UPDATE p SET name='ours' WHERE id=1", author="a", message="main edit")
+        res = self.tm.merge("feature", author="a")
+        self.assertEqual(len(res["conflicts"]), 1)
+        self.assertEqual(self.tm.query("SELECT name FROM p WHERE id=1")[0]["name"], "ours")
+        os.remove(path)
+
+    def test_merge_strategy_theirs(self):
+        self.tm.exec_sql("CREATE TABLE p(id INTEGER PRIMARY KEY, name TEXT)", author="a", message="c")
+        self.tm.exec_sql("INSERT INTO p(name) VALUES('base')", author="a", message="add")
+        path = self.tm.branch("f", author="a")
+        fb = TimeMachine(path)
+        fb.exec_sql("UPDATE p SET name='theirs' WHERE id=1", author="dev", message="branch")
+        fb.close()
+        self.tm.exec_sql("UPDATE p SET name='ours' WHERE id=1", author="a", message="main")
+        res = self.tm.merge("f", author="a", strategy="theirs")
+        self.assertEqual(len(res["conflicts"]), 0)
+        self.assertEqual(len(res["resolved"]), 1)
+        self.assertEqual(self.tm.query("SELECT name FROM p WHERE id=1")[0]["name"], "theirs")
+        os.remove(path)
+
+    def test_merge_strategy_newest(self):
+        self.tm.exec_sql("CREATE TABLE p(id INTEGER PRIMARY KEY, name TEXT)", author="a", message="c")
+        self.tm.exec_sql("INSERT INTO p(name) VALUES('base')", author="a", message="add")
+        path = self.tm.branch("f", author="a")
+        fb = TimeMachine(path)
+        fb.exec_sql("UPDATE p SET name='theirs' WHERE id=1", author="dev", message="branch")
+        fb.close()
+        self._ts()  # ensure our change is strictly newer
+        self.tm.exec_sql("UPDATE p SET name='ours' WHERE id=1", author="a", message="main")
+        res = self.tm.merge("f", author="a", strategy="newest")
+        # ours is newer -> ours kept
+        self.assertEqual(self.tm.query("SELECT name FROM p WHERE id=1")[0]["name"], "ours")
+        self.assertEqual(len(res["conflicts"]), 0)
+        os.remove(path)
+
+    def test_compaction_preserves_time_travel_after_cutoff(self):
+        self.tm.exec_sql("CREATE TABLE p(id INTEGER PRIMARY KEY, v INT)", author="a", message="c")
+        self.tm.exec_sql("INSERT INTO p(v) VALUES(1)", author="a", message="add")
+        self.tm.exec_sql("UPDATE p SET v=2 WHERE id=1", author="a", message="e1")
+        cutoff = self._ts()
+        self.tm.exec_sql("UPDATE p SET v=3 WHERE id=1", author="a", message="e2")
+        after = self._ts()
+
+        before_count = len(self.tm.log(table="p", limit=1000))
+        res = self.tm.compact(cutoff)
+        self.assertGreater(res["removed"], 0)
+        after_count = len(self.tm.log(table="p", limit=1000))
+        self.assertLess(after_count, before_count)  # history shrank
+
+        # state at cutoff and after are still correct
+        self.assertEqual(self.tm.as_of("p", cutoff)[0]["v"], 2)
+        self.assertEqual(self.tm.as_of("p", after)[0]["v"], 3)
+        self.assertEqual(self.tm.query("SELECT v FROM p WHERE id=1")[0]["v"], 3)
+
+    def test_compaction_keeps_hash_chain_valid(self):
+        self.tm.exec_sql("CREATE TABLE p(id INTEGER PRIMARY KEY, v INT)", author="a", message="c")
+        self.tm.exec_sql("INSERT INTO p(v) VALUES(1)", author="a", message="add")
+        cutoff = self._ts()
+        self.tm.exec_sql("UPDATE p SET v=2 WHERE id=1", author="a", message="e")
+        self.tm.compact(cutoff)
+        self.assertTrue(self.tm.verify_integrity()["ok"])
+
     def test_schema_blame(self):
         self.tm.exec_sql(
             "CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT)",

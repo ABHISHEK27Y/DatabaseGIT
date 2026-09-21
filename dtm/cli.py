@@ -75,10 +75,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_db(sp)
     sp.add_argument("sql", help="SELECT statement")
 
-    sp = sub.add_parser("log", help="show recent changes")
+    sp = sub.add_parser("log", help="show recent changes (with filters)")
     add_db(sp)
     sp.add_argument("--table", "-t", default=None, help="restrict to one table")
     sp.add_argument("--limit", "-n", type=int, default=20)
+    sp.add_argument("--author", default=None, help="filter by author")
+    sp.add_argument("--op", default=None, help="filter by INSERT/UPDATE/DELETE")
+    sp.add_argument("--since", default=None, help="only changes at/after this time or tag")
+    sp.add_argument("--until", default=None, help="only changes at/before this time or tag")
+    sp.add_argument("--contains", default=None, help="substring match in message/values")
 
     sp = sub.add_parser("as-of", help="reconstruct a table's state at a point in time")
     add_db(sp)
@@ -127,6 +132,45 @@ def build_parser() -> argparse.ArgumentParser:
     add_db(sp)
     sp.add_argument("--port", "-p", type=int, default=8080)
     sp.add_argument("--host", default="127.0.0.1")
+
+    sp = sub.add_parser("verify", help="check the tamper-evident hash chain")
+    add_db(sp)
+
+    sp = sub.add_parser("anomalies", help="flag suspicious mass changes")
+    add_db(sp)
+    sp.add_argument("--threshold", "-n", type=int, default=5,
+                    help="minimum rows changed in one transaction to flag")
+
+    sp = sub.add_parser("report", help="export an audit report (html/csv)")
+    add_db(sp)
+    sp.add_argument("--format", "-f", choices=["html", "csv"], default="html")
+    sp.add_argument("--out", "-o", required=True, help="output file path")
+    sp.add_argument("--table", "-t", default=None)
+    sp.add_argument("--author", default=None)
+    sp.add_argument("--since", default=None)
+    sp.add_argument("--until", default=None)
+
+    sp = sub.add_parser("branch", help="fork the database into a new branch")
+    add_db(sp)
+    sp.add_argument("name")
+    sp.add_argument("--author", "-a", default=None)
+
+    sp = sub.add_parser("branches", help="list branches")
+    add_db(sp)
+
+    sp = sub.add_parser("merge", help="merge a branch back into this database")
+    add_db(sp)
+    sp.add_argument("name")
+    sp.add_argument("--author", "-a", default=None)
+    sp.add_argument("--message", "-m", default="")
+    sp.add_argument("--strategy", "-s", default="manual",
+                    choices=["manual", "ours", "theirs", "newest"],
+                    help="how to resolve conflicts (default: manual)")
+
+    sp = sub.add_parser("compact", help="collapse old history before a cutoff (retention)")
+    add_db(sp)
+    sp.add_argument("--before", required=True, help="cutoff: timestamp / tag / now")
+    sp.add_argument("--author", "-a", default=None)
 
     sp = sub.add_parser("tables", help="list tracked tables")
     add_db(sp)
@@ -178,7 +222,12 @@ def _dispatch(tm: TimeMachine, args) -> int:
         return 0
 
     if cmd == "log":
-        rows = tm.log(table=args.table, limit=args.limit)
+        rows = tm.log(
+            table=args.table, limit=args.limit, author=args.author, op=args.op,
+            since=tm.resolve_time(args.since) if args.since else None,
+            until=tm.resolve_time(args.until) if args.until else None,
+            contains=args.contains,
+        )
         _print_table(
             rows,
             ["change_id", "ts", "tbl", "pk", "op", "author", "message"],
@@ -243,6 +292,73 @@ def _dispatch(tm: TimeMachine, args) -> int:
     if cmd == "serve":
         from .web import serve
         serve(tm, host=args.host, port=args.port)
+        return 0
+
+    if cmd == "verify":
+        res = tm.verify_integrity()
+        if res["ok"]:
+            print(f"OK  hash chain intact across {res['total']} change(s).")
+            print(f"    head: {res['head']}")
+            return 0
+        print(f"TAMPERED  chain breaks at change #{res['broken_at']} "
+              f"(of {res['total']}).")
+        return 2
+
+    if cmd == "anomalies":
+        flags = tm.anomalies(threshold=args.threshold)
+        if not flags:
+            print(f"No transactions changed >= {args.threshold} rows at once.")
+        else:
+            _print_table(flags, ["txn_id", "ts", "op", "tbl", "rows_affected",
+                                 "author", "message"])
+        return 0
+
+    if cmd == "report":
+        from .report import write_report
+        write_report(tm, args.out, fmt=args.format, table=args.table,
+                     author=args.author,
+                     since=tm.resolve_time(args.since) if args.since else None,
+                     until=tm.resolve_time(args.until) if args.until else None)
+        print(f"Wrote {args.format.upper()} report to {args.out}")
+        return 0
+
+    if cmd == "branch":
+        author = args.author or _default_author()
+        path = tm.branch(args.name, author=author)
+        print(f"Branch '{args.name}' created: {path}")
+        print(f"Work on it with:  python -m dtm exec \"{path}\" ...")
+        print(f"Later merge back:  python -m dtm merge {args.db} {args.name}")
+        return 0
+
+    if cmd == "branches":
+        _print_table(tm.list_branches(), ["name", "created_from_ts", "author", "path"])
+        return 0
+
+    if cmd == "merge":
+        author = args.author or _default_author()
+        res = tm.merge(args.name, author=author, message=args.message,
+                       strategy=args.strategy)
+        print(f"Merged '{args.name}' [{res['strategy']}]: {res['applied']} "
+              f"change(s) applied across {len(res['tables'])} table(s).")
+        if res.get("resolved"):
+            print(f"{len(res['resolved'])} conflict(s) auto-resolved "
+                  f"({args.strategy}).")
+        if res["conflicts"]:
+            print(f"{len(res['conflicts'])} CONFLICT(s) (this side kept):")
+            for c in res["conflicts"]:
+                print(f"  {c['table']} row {c['pk']}: ours={c['ours']} "
+                      f"theirs={c['theirs']}")
+        elif not res.get("resolved"):
+            print("No conflicts.")
+        return 0
+
+    if cmd == "compact":
+        author = args.author or _default_author()
+        before = tm.resolve_time(args.before)
+        res = tm.compact(before, author=author)
+        print(f"Compacted history before {res['cutoff']}: removed "
+              f"{res['removed']} change(s), kept {res['baseline_rows']} baseline "
+              f"row(s). Time travel from the cutoff onward is preserved.")
         return 0
 
     if cmd == "tables":

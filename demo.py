@@ -121,6 +121,34 @@ def main():
     print(f"  by author     : "
           + ", ".join(f"{a['author']}={a['n']}" for a in s['by_author']))
 
+    rule("10. Tamper-evident log -- the audit trail can't be secretly edited")
+    print("  integrity:", tm.verify_integrity()["ok"], "(chain intact)")
+    tm.conn.execute("UPDATE _dtm_changes SET author='ghost' WHERE change_id=1")
+    tm.conn.commit()
+    v = tm.verify_integrity()
+    print(f"  after secretly editing change #1 -> intact? {v['ok']}, "
+          f"detected break at change #{v.get('broken_at')}")
+
+    rule("11. Anomaly detection -- flag the bad deploy automatically")
+    for a in tm.anomalies(threshold=1):
+        print(f"  [!] txn {a['txn_id']}: {a['op']} touched {a['rows_affected']} "
+              f"row(s) in {a['tbl']} by {a['author']} -- {a['message']}")
+
+    rule("12. Branching & merge -- fork, change, merge back")
+    import os as _os
+    path = tm.branch("experiment", author="alice")
+    print(f"  forked -> {_os.path.basename(path)}")
+    fb = TimeMachine(path)
+    fb.exec_sql("UPDATE users SET plan='vip' WHERE name='Meera'",
+                author="dev", message="try VIP tier on branch")
+    fb.close()
+    res = tm.merge("experiment", author="alice")
+    print(f"  merged: {res['applied']} change(s), {len(res['conflicts'])} conflict(s)")
+    print("  Meera's plan after merge:",
+          tm.query("SELECT plan FROM users WHERE name='Meera'")[0]["plan"])
+    if _os.path.exists(path):
+        _os.remove(path)
+
     tm.close()
     print(f"\nDone. Explore visually with:  python -m dtm serve {DB}")
 

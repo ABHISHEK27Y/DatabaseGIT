@@ -40,6 +40,15 @@ python -m dtm tag     mydb.sqlite before-deploy -m "known-good"   # name a momen
 python -m dtm revert  mydb.sqlite products --to before-deploy -a you  # one-command undo
 python -m dtm stats   mydb.sqlite                    # activity summary
 python -m dtm serve   mydb.sqlite --port 8080        # visual web UI (no deps)
+
+# 5. Trust, monitor, branch, and report
+python -m dtm verify    mydb.sqlite                  # is the audit log un-tampered?
+python -m dtm anomalies mydb.sqlite -n 10            # flag suspicious mass changes
+python -m dtm log       mydb.sqlite --author bob --op DELETE --contains price  # search
+python -m dtm branch    mydb.sqlite experiment       # fork the database
+python -m dtm merge     mydb.sqlite experiment -s newest   # 3-way merge, auto-resolve
+python -m dtm compact   mydb.sqlite --before 2026-01-01T00:00:00+00:00  # retention
+python -m dtm report    mydb.sqlite -f html -o audit.html     # audit report
 ```
 
 > Anywhere a timestamp is accepted you can pass a **tag name** or **`now`** instead.
@@ -123,17 +132,40 @@ Rows are keyed internally by SQLite's `rowid`.
 
 ```
 dtm/
-  core.py     # TimeMachine engine: triggers, logging, time travel, revert, tags, stats
+  core.py     # TimeMachine engine: triggers, time travel, revert, tags, stats,
+              #   hash-chain integrity, anomalies, branching/merge, session API
   cli.py      # argparse command-line interface
   web.py      # zero-dependency web UI (stdlib http.server)
+  report.py   # HTML / CSV audit-report export
+  postgres.py # optional PostgreSQL backend (needs psycopg + a server)
   __main__.py # enables `python -m dtm`
 demo.py       # end-to-end walkthrough of every feature
 tests/
-  test_dtm.py # 12 unit tests for the engine
+  test_dtm.py # 19 unit tests for the engine
+pyproject.toml            # `pip install .` -> a global `dtm` command
+.github/workflows/ci.yml  # tests on Linux + Windows, Python 3.9 / 3.11 / 3.13
+```
+
+Install as a real command:
+
+```bash
+pip install .    # then use `dtm ...` instead of `python -m dtm ...`
 ```
 
 See [DOCS.md](DOCS.md) for the full feature reference and
 [ARCHITECTURE.md](ARCHITECTURE.md) for the design reasoning (how/why/what).
+
+### Highlights
+
+- **Tamper-evident log** — every change is hash-chained to the previous one, so
+  any edit to history is detectable (`dtm verify`).
+- **Time travel & revert** — view or restore any table at any past moment.
+- **Branching & merge** — fork the database, change it, 3-way merge it back with
+  conflict detection.
+- **Anomaly detection** — auto-flag runaway mass deletes/updates.
+- **Audit reports** — export who-changed-what to HTML or CSV.
+- **Zero dependencies** — engine, CLI and web UI are pure standard library
+  (PostgreSQL backend is the one optional extra).
 
 ---
 
@@ -146,11 +178,13 @@ See [DOCS.md](DOCS.md) for the full feature reference and
   A production version would add compaction/retention policies.
 - **Assumes normal `rowid` tables** (not `WITHOUT ROWID`).
 
-## Possible extensions (stretch goals)
+## Possible extensions (remaining stretch goals)
 
-- **Branching & merging** database state (the full "git for databases" dream).
-- **Retention / compaction** to bound history growth.
-- Revert a **single row or single change** (finer than table-level revert).
-- Adapters for **PostgreSQL** (logical decoding / WAL) and **MySQL** (binlog).
+- **MySQL** adapter (binlog-based), to sit alongside the PostgreSQL backend.
+- **Distributed / streaming** capture for very high write volumes.
+- A hosted, multi-database dashboard.
 
-*(Revert, tags, stats and the web UI are now implemented — see above.)*
+*(Revert, tags, stats, web UI, tamper-evident hash chain, anomaly detection,
+branching + 3-way merge with conflict strategies, retention/compaction, audit
+reports, search, a programmatic API, the PostgreSQL backend, pip packaging and CI
+are all implemented — see above.)*

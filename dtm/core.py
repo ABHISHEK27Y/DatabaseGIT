@@ -19,8 +19,12 @@ Only the Python standard library is used (sqlite3, json, datetime).
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import shutil
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
@@ -91,6 +95,7 @@ class TimeMachine:
             );
 
             -- Append-only row-level change log. This is the heart of the tool.
+            -- row_hash/prev_hash form a tamper-evident chain (see _hash_new_changes).
             CREATE TABLE IF NOT EXISTS {META_PREFIX}changes (
                 change_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 txn_id    INTEGER,
@@ -101,7 +106,9 @@ class TimeMachine:
                 old_json  TEXT,
                 new_json  TEXT,
                 author    TEXT,
-                message   TEXT
+                message   TEXT,
+                prev_hash TEXT,
+                row_hash  TEXT
             );
             CREATE INDEX IF NOT EXISTS {META_PREFIX}changes_lookup
                 ON {META_PREFIX}changes (tbl, pk, change_id);
@@ -130,16 +137,36 @@ class TimeMachine:
                 message    TEXT,
                 created_ts TEXT
             );
+
+            -- Branches forked from this database (git-style branching).
+            CREATE TABLE IF NOT EXISTS {META_PREFIX}branches (
+                name            TEXT PRIMARY KEY,
+                path            TEXT,   -- the forked database file
+                created_from_ts TEXT,   -- the point in time it diverged
+                created_ts      TEXT,
+                author          TEXT
+            );
             """
         )
+        self._migrate()
         c.execute(
-            f"INSERT OR IGNORE INTO {META_PREFIX}meta(key, value) VALUES ('version', '1')"
+            f"INSERT OR IGNORE INTO {META_PREFIX}meta(key, value) VALUES ('version', '2')"
         )
         c.commit()
         self._set_context("system", "dtm init", txn_id=None)
         self.resync_tracking()
         self._maybe_snapshot_schema(txn_id=None, author="system", message="dtm init")
+        self._hash_new_changes()
         c.commit()
+
+    def _migrate(self) -> None:
+        """Add columns introduced by later versions to an older repo, in place."""
+        cols = {r["name"] for r in self.conn.execute(
+            f'PRAGMA table_info("{META_PREFIX}changes")')}
+        for col in ("prev_hash", "row_hash"):
+            if col not in cols:
+                self.conn.execute(
+                    f"ALTER TABLE {META_PREFIX}changes ADD COLUMN {col} TEXT")
 
     # ------------------------------------------------------------------ #
     # introspection helpers
@@ -336,12 +363,38 @@ class TimeMachine:
         # whose schema changed need refreshed triggers + a schema snapshot.
         self.resync_tracking()
         self._maybe_snapshot_schema(txn_id, author, message)
+        self._hash_new_changes()
         self.conn.commit()
         return txn_id
 
     def exec_sql(self, sql: str, author: str, message: str) -> None:
         """Run user SQL (DDL and/or DML) as a single attributed transaction."""
         self._run(author, message, lambda txn_id: self.conn.executescript(sql))
+
+    @contextmanager
+    def session(self, author: str, message: str = ""):
+        """Programmatic API: run several statements as one attributed commit.
+
+            with tm.session(author="alice", message="import") as cur:
+                cur.execute("INSERT INTO products(name) VALUES('X')")
+                cur.execute("UPDATE products SET price=9 WHERE name='X'")
+
+        Everything inside the block is captured under one transaction, attributed
+        to `author`, and committed on clean exit (rolled back on exception).
+        """
+        ts = _now()
+        txn_id = self._new_txn(author, message, ts)
+        self._set_context(author, message, txn_id, ts=ts)
+        cur = self.conn.cursor()
+        try:
+            yield cur
+        except Exception:
+            self.conn.rollback()
+            raise
+        self.resync_tracking()
+        self._maybe_snapshot_schema(txn_id, author, message)
+        self._hash_new_changes()
+        self.conn.commit()
 
     def query(self, sql: str) -> list[sqlite3.Row]:
         """Read-only query against the live database."""
@@ -363,8 +416,9 @@ class TimeMachine:
             FROM {META_PREFIX}changes c
             WHERE c.tbl = ? AND c.ts <= ?
               AND c.change_id = (
-                  SELECT MAX(c2.change_id) FROM {META_PREFIX}changes c2
+                  SELECT c2.change_id FROM {META_PREFIX}changes c2
                   WHERE c2.tbl = c.tbl AND c2.pk = c.pk AND c2.ts <= ?
+                  ORDER BY c2.ts DESC, c2.change_id DESC LIMIT 1
               )
             ORDER BY c.pk
             """,
@@ -389,18 +443,42 @@ class TimeMachine:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def log(self, table: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+    def log(
+        self,
+        table: str | None = None,
+        limit: int = 20,
+        author: str | None = None,
+        op: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        contains: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Recent changes, newest first, with optional filters.
+
+        `since`/`until` are ISO timestamps (or tag names, resolved by the caller);
+        `contains` matches a substring in the message or in the row values.
+        """
+        where, params = [], []
         if table:
-            rows = self.conn.execute(
-                f"SELECT * FROM {META_PREFIX}changes WHERE tbl = ? "
-                f"ORDER BY change_id DESC LIMIT ?",
-                (table, limit),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                f"SELECT * FROM {META_PREFIX}changes ORDER BY change_id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+            where.append("tbl = ?"); params.append(table)
+        if author:
+            where.append("author = ?"); params.append(author)
+        if op:
+            where.append("op = ?"); params.append(op.upper())
+        if since:
+            where.append("ts >= ?"); params.append(since)
+        if until:
+            where.append("ts <= ?"); params.append(until)
+        if contains:
+            where.append("(message LIKE ? OR new_json LIKE ? OR old_json LIKE ?)")
+            params += [f"%{contains}%"] * 3
+        clause = ("WHERE " + " AND ".join(where)) if where else ""
+        params.append(limit)
+        rows = self.conn.execute(
+            f"SELECT * FROM {META_PREFIX}changes {clause} "
+            f"ORDER BY change_id DESC LIMIT ?",
+            params,
+        ).fetchall()
         return [dict(r) for r in rows]
 
     def blame(self, table: str, pk: int, column: str) -> dict[str, Any] | None:
@@ -451,7 +529,13 @@ class TimeMachine:
             if pk not in before:
                 added.append({"pk": pk, "row": row})
             elif before[pk] != row:
-                changed.append({"pk": pk, "before": before[pk], "after": row})
+                fields = [
+                    k for k in set(row) | set(before[pk])
+                    if before[pk].get(k) != row.get(k)
+                ]
+                changed.append({
+                    "pk": pk, "before": before[pk], "after": row, "fields": fields,
+                })
         for pk, row in before.items():
             if pk not in after:
                 removed.append({"pk": pk, "row": row})
@@ -464,8 +548,9 @@ class TimeMachine:
             FROM {META_PREFIX}changes c
             WHERE c.tbl = ? AND c.ts <= ?
               AND c.change_id = (
-                  SELECT MAX(c2.change_id) FROM {META_PREFIX}changes c2
+                  SELECT c2.change_id FROM {META_PREFIX}changes c2
                   WHERE c2.tbl = c.tbl AND c2.pk = c.pk AND c2.ts <= ?
+                  ORDER BY c2.ts DESC, c2.change_id DESC LIMIT 1
               )
             """,
             (table, at, at),
@@ -679,6 +764,284 @@ class TimeMachine:
             "first_change": span["first"],
             "last_change": span["last"],
         }
+
+    # ------------------------------------------------------------------ #
+    # tamper-evident hash chain
+    # ------------------------------------------------------------------ #
+    _HASH_FIELDS = ("change_id", "txn_id", "ts", "tbl", "pk", "op",
+                    "old_json", "new_json", "author", "message")
+
+    def _payload(self, r) -> str:
+        return "|".join("" if r[k] is None else str(r[k]) for k in self._HASH_FIELDS)
+
+    def _hash_new_changes(self) -> None:
+        """Chain-hash any change rows that don't yet have a hash.
+
+        Each row's hash = sha256(previous_row_hash + payload). Because every hash
+        depends on the one before it, editing or deleting any past change breaks
+        every hash after it -- which `verify_integrity` detects.
+        """
+        new = self.conn.execute(
+            f"SELECT * FROM {META_PREFIX}changes WHERE row_hash IS NULL "
+            f"ORDER BY change_id"
+        ).fetchall()
+        if not new:
+            return
+        prev = self.conn.execute(
+            f"SELECT row_hash FROM {META_PREFIX}changes WHERE row_hash IS NOT NULL "
+            f"ORDER BY change_id DESC LIMIT 1"
+        ).fetchone()
+        prev_hash = prev["row_hash"] if prev else "GENESIS"
+        for r in new:
+            h = hashlib.sha256(
+                (prev_hash + "|" + self._payload(r)).encode("utf-8")
+            ).hexdigest()
+            self.conn.execute(
+                f"UPDATE {META_PREFIX}changes SET prev_hash=?, row_hash=? "
+                f"WHERE change_id=?",
+                (prev_hash, h, r["change_id"]),
+            )
+            prev_hash = h
+
+    def verify_integrity(self) -> dict[str, Any]:
+        """Recompute the whole hash chain and report whether it is intact."""
+        rows = self.conn.execute(
+            f"SELECT * FROM {META_PREFIX}changes ORDER BY change_id"
+        ).fetchall()
+        prev_hash = "GENESIS"
+        for r in rows:
+            expect = hashlib.sha256(
+                (prev_hash + "|" + self._payload(r)).encode("utf-8")
+            ).hexdigest()
+            if r["row_hash"] != expect or (r["prev_hash"] or "GENESIS") != prev_hash:
+                return {"ok": False, "broken_at": r["change_id"], "total": len(rows)}
+            prev_hash = r["row_hash"]
+        return {"ok": True, "total": len(rows), "head": prev_hash}
+
+    # ------------------------------------------------------------------ #
+    # anomaly detection
+    # ------------------------------------------------------------------ #
+    def anomalies(self, threshold: int = 5) -> list[dict[str, Any]]:
+        """Flag transactions that changed a suspicious number of rows at once
+        (e.g. a runaway DELETE/UPDATE, like a bad deployment)."""
+        rows = self.conn.execute(
+            f"""
+            SELECT txn_id, op, COUNT(*) AS rows_affected, MIN(ts) AS ts,
+                   MAX(author) AS author, MAX(message) AS message, tbl
+            FROM {META_PREFIX}changes
+            WHERE op IN ('DELETE','UPDATE')
+            GROUP BY txn_id, op
+            HAVING rows_affected >= ?
+            ORDER BY rows_affected DESC
+            """,
+            (threshold,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------ #
+    # audit report data
+    # ------------------------------------------------------------------ #
+    def report_rows(self, **filters) -> list[dict[str, Any]]:
+        """Change rows for an audit report (same filters as log, no limit)."""
+        filters.setdefault("limit", 1_000_000)
+        return list(reversed(self.log(**filters)))  # chronological order
+
+    # ------------------------------------------------------------------ #
+    # branching & merging (git-style, file-level fork + 3-way merge)
+    # ------------------------------------------------------------------ #
+    def _branch_path(self, name: str) -> str:
+        base, ext = os.path.splitext(self.path)
+        safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in name)
+        return f"{base}.{safe}{ext or '.sqlite'}"
+
+    def branch(self, name: str, author: str = "", message: str = "") -> str:
+        """Fork the whole database into a new branch file that shares this
+        one's history up to now. Returns the new file's path."""
+        newpath = self._branch_path(name)
+        self.conn.commit()
+        shutil.copyfile(self.path, newpath)
+        self.conn.execute(
+            f"INSERT OR REPLACE INTO {META_PREFIX}branches"
+            f"(name, path, created_from_ts, created_ts, author) VALUES (?,?,?,?,?)",
+            (name, newpath, _now(), _now(), author),
+        )
+        self.conn.commit()
+        return newpath
+
+    def list_branches(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            f"SELECT name, path, created_from_ts, created_ts, author "
+            f"FROM {META_PREFIX}branches ORDER BY created_ts"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def _last_change_ts(self, table: str, pk: int) -> str | None:
+        row = self.conn.execute(
+            f"SELECT MAX(ts) AS ts FROM {META_PREFIX}changes WHERE tbl=? AND pk=?",
+            (table, pk),
+        ).fetchone()
+        return row["ts"] if row else None
+
+    def merge(self, branch_name: str, author: str = "merge", message: str = "",
+              strategy: str = "manual") -> dict[str, Any]:
+        """Three-way merge another branch's changes back into this database.
+
+        Uses the fork point as the common base. A row the source branch changed
+        is applied cleanly if we haven't touched it since the fork. When *both*
+        sides changed the same row, ``strategy`` decides:
+
+            manual  -- report the conflict, keep our version (default)
+            ours    -- keep our version (auto-resolved, no conflict reported)
+            theirs  -- take the branch's version
+            newest  -- take whichever side changed the row most recently
+        """
+        if strategy not in ("manual", "ours", "theirs", "newest"):
+            raise TimeMachineError(f"unknown merge strategy: {strategy}")
+        row = self.conn.execute(
+            f"SELECT path, created_from_ts FROM {META_PREFIX}branches WHERE name=?",
+            (branch_name,),
+        ).fetchone()
+        if not row:
+            raise TimeMachineError(f"unknown branch: {branch_name}")
+        fork_ts = row["created_from_ts"]
+        src = TimeMachine(row["path"])
+        summary = {"applied": 0, "conflicts": [], "resolved": [],
+                   "tables": [], "strategy": strategy}
+
+        def resolve(table, rid, ours_val, theirs_val):
+            """Decide a conflicting row. Returns (apply?, value)."""
+            if strategy == "theirs":
+                return True, theirs_val
+            if strategy == "ours":
+                return False, None
+            if strategy == "newest":
+                their_ts = src._last_change_ts(table, rid) or ""
+                our_ts = self._last_change_ts(table, rid) or ""
+                if their_ts > our_ts:
+                    return True, theirs_val
+                return False, None
+            return None, None  # manual -> conflict
+
+        try:
+            shared = set(self.user_tables()) & set(src.user_tables())
+            for table in sorted(shared):
+                base = self._as_of_by_pk(table, fork_ts)      # state at fork
+                theirs = src._live_rows_by_pk(table)           # source now
+                ours = self._live_rows_by_pk(table)            # target now
+                to_apply: dict[int, dict | None] = {}
+
+                def handle_conflict(rid, ours_val, theirs_val):
+                    apply, val = resolve(table, rid, ours_val, theirs_val)
+                    if apply is None:  # manual
+                        summary["conflicts"].append(
+                            {"table": table, "pk": rid,
+                             "ours": ours_val, "theirs": theirs_val})
+                    else:
+                        if apply:
+                            to_apply[rid] = val
+                        summary["resolved"].append(
+                            {"table": table, "pk": rid, "took": strategy})
+
+                for rid, s in theirs.items():
+                    b, t = base.get(rid), ours.get(rid)
+                    if s == b:
+                        continue                               # source unchanged
+                    if t == b:
+                        to_apply[rid] = s                      # clean: source wins
+                    elif t != s:
+                        handle_conflict(rid, t, s)
+                for rid in base:                               # source deletions
+                    if rid not in theirs and rid in ours:
+                        if ours[rid] == base[rid]:
+                            to_apply[rid] = None               # clean delete
+                        else:
+                            handle_conflict(rid, ours[rid], None)
+                if to_apply:
+                    self._apply_states(table, to_apply, author,
+                                       message or f"merge {branch_name} ({strategy})")
+                    summary["applied"] += len(to_apply)
+                    summary["tables"].append(table)
+        finally:
+            src.close()
+        return summary
+
+    def _apply_states(self, table: str, states: dict[int, dict | None],
+                      author: str, message: str) -> None:
+        """Force `table` rows (by rowid) to given states (None = delete),
+        recorded through the normal write path."""
+        cols = [c["name"] for c in self.columns(table)]
+        alias = self._integer_pk_alias(table)
+        qt = self._quote_ident(table)
+
+        def body(txn_id: int) -> None:
+            live = self._live_rows_by_pk(table)
+            for rid, want in states.items():
+                if want is None:
+                    if rid in live:
+                        self.conn.execute(f"DELETE FROM {qt} WHERE rowid=?", (rid,))
+                elif rid not in live:
+                    if alias:
+                        ins, vals = cols, [want.get(c) for c in cols]
+                    else:
+                        ins, vals = ["rowid"] + cols, [rid] + [want.get(c) for c in cols]
+                    collist = ", ".join(self._quote_ident(c) for c in ins)
+                    ph = ", ".join(["?"] * len(ins))
+                    self.conn.execute(
+                        f"INSERT INTO {qt} ({collist}) VALUES ({ph})", vals)
+                else:
+                    setc = [c for c in cols if c != alias]
+                    assign = ", ".join(f"{self._quote_ident(c)}=?" for c in setc)
+                    self.conn.execute(
+                        f"UPDATE {qt} SET {assign} WHERE rowid=?",
+                        [want.get(c) for c in setc] + [rid])
+
+        self._run(author, message, body)
+
+    # ------------------------------------------------------------------ #
+    # retention / compaction
+    # ------------------------------------------------------------------ #
+    def compact(self, before: str, author: str = "system") -> dict[str, Any]:
+        """Bound history growth: collapse all changes at or before `before`
+        into a single baseline snapshot per row.
+
+        Time travel and reconstruction for any point **at or after** `before`
+        stay correct; the fine-grained history *before* the cutoff is discarded
+        on purpose (that is the whole point of retention). Because this
+        deliberately rewrites the log, the tamper-evident hash chain is rebuilt
+        and the compaction is recorded in `_dtm_meta`.
+        """
+        before = self.resolve_time(before)
+        # 1. capture each table's exact state at the cutoff
+        states = {t: self._as_of_by_pk(t, before) for t in self.user_tables()}
+        # 2. how much are we removing?
+        removed = self.conn.execute(
+            f"SELECT COUNT(*) AS n FROM {META_PREFIX}changes WHERE ts <= ?",
+            (before,),
+        ).fetchone()["n"]
+        # 3. drop the old changes and lay down baseline snapshots at the cutoff
+        self.conn.execute(f"DELETE FROM {META_PREFIX}changes WHERE ts <= ?", (before,))
+        kept = 0
+        for table, rows in states.items():
+            for pk, row in rows.items():
+                self.conn.execute(
+                    f"INSERT INTO {META_PREFIX}changes"
+                    f"(txn_id, ts, tbl, pk, op, old_json, new_json, author, message) "
+                    f"VALUES (NULL, ?, ?, ?, 'INSERT', NULL, ?, ?, 'compaction baseline')",
+                    (before, table, pk, json.dumps(row), author),
+                )
+                kept += 1
+        # 4. rebuild the hash chain over the compacted log
+        self.conn.execute(
+            f"UPDATE {META_PREFIX}changes SET row_hash=NULL, prev_hash=NULL")
+        self._hash_new_changes()
+        self.conn.execute(
+            f"INSERT OR REPLACE INTO {META_PREFIX}meta(key, value) VALUES "
+            f"('last_compaction', ?)",
+            (json.dumps({"cutoff": before, "at": _now(),
+                         "removed": removed, "kept": kept}),),
+        )
+        self.conn.commit()
+        return {"cutoff": before, "removed": removed, "baseline_rows": kept}
 
     def close(self) -> None:
         self.conn.close()

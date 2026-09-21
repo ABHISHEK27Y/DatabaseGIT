@@ -246,9 +246,39 @@ Invoke as `python -m dtm <command> <db> [...]`.
 | `tables` | List tracked tables. |
 | `schema-log` | Schema-change history. |
 | `schema-blame` | When a column was added/changed, and by whom. |
+| `verify` | Check the tamper-evident hash chain is intact. |
+| `anomalies` | Flag transactions that changed many rows at once (`-n threshold`). |
+| `report` | Export an audit report (`--format html\|csv --out FILE`). |
+| `branch` / `branches` / `merge` | Fork the database, list forks, 3-way merge back (`--strategy manual\|ours\|theirs\|newest`). |
+| `compact` | Retention: collapse history before `--before <ts/tag/now>` into baselines. |
 
-Timestamps are the ISO strings shown in `log` output. Anywhere a timestamp is
-accepted you may also pass a **tag name** or the literal **`now`**.
+`log` also accepts `--author`, `--op`, `--since`, `--until`, `--contains` for
+search/filtering. Timestamps are the ISO strings shown in `log` output; anywhere a
+timestamp is accepted you may also pass a **tag name** or the literal **`now`**.
+
+There is a programmatic API too:
+
+```python
+with tm.session(author="alice", message="import") as cur:
+    cur.execute("INSERT INTO products(name) VALUES ('X')")
+    cur.execute("UPDATE products SET price = 9 WHERE name = 'X'")
+# committed as one attributed transaction on clean exit
+```
+
+**Integrity.** Each change stores `row_hash = sha256(previous_hash + payload)`, so
+the log is a hash chain — editing any past change breaks every hash after it, and
+`verify` reports the exact `change_id` where it breaks. The log is thus
+*tamper-evident*: not un-editable, but impossible to edit undetectably.
+
+**Branching & merge.** `branch` forks the whole database (sharing history to the
+fork point); `merge` does a **three-way merge** using the fork point as the base —
+clean changes apply, and rows changed on both sides are reported as **conflicts**
+(this side wins). Simplified (no auto-resolution) but real.
+
+**PostgreSQL backend** (`dtm/postgres.py`, optional): the same design on a real
+multi-user server, where attribution comes from `current_user`. Needs
+`pip install "database-time-machine[postgres]"` and a running server, so it is
+outside the dependency-free test suite; SQLite is the fully-tested reference.
 
 ### Revert, Tags, Stats & Web UI (detailed)
 

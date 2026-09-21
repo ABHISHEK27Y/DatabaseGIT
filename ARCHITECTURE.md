@@ -208,14 +208,53 @@ tests never touch the CLI or HTTP layers).
 
 ---
 
-## 11. Extension points (where future work plugs in)
+## 11. Extension points (and what's now built)
 
-| Goal | Where it slots in |
-|---|---|
-| Revert a single row/change | new engine method reusing `_run` + `_as_of_by_pk` |
-| Retention / compaction | a maintenance method over `_dtm_changes` |
-| PostgreSQL / MySQL backend | swap engine+storage; attribution from session user |
-| Branching / merging | new tables for branch refs + a merge algorithm over the log |
-| Auth for web writes | add POST endpoints guarded by a token, calling `revert`/`tag` |
+Because of the layering, each capability touches one layer, not all three. Most of
+the roadmap is now implemented:
 
-The layering means each of these touches one layer, not all three.
+| Capability | Status | Where it lives |
+|---|---|---|
+| Tamper-evident hash chain | **done** | `_hash_new_changes` / `verify_integrity` (engine) |
+| Anomaly detection | **done** | `anomalies()` (engine) |
+| Branching & 3-way merge | **done** | `branch` / `merge` / `_apply_states` (engine) |
+| Log search / filter | **done** | `log(author, op, since, until, contains)` |
+| Programmatic API | **done** | `session()` context manager |
+| Revert from the web UI | **done** | `do_POST` + `/api/revert` (web) |
+| Column-level diff | **done** | `diff()` returns `fields` (engine + web) |
+| Audit report (HTML/CSV) | **done** | `dtm/report.py` |
+| PostgreSQL backend | **done, untested here** | `dtm/postgres.py` (needs psycopg + a server) |
+| Packaging + CI | **done** | `pyproject.toml`, `.github/workflows/ci.yml` |
+| Retention / compaction | **done** | `compact()` (engine), `dtm compact` |
+| Automatic merge-conflict resolution | **done** | `merge(strategy=...)`: ours / theirs / newest |
+
+### Design note: hash chain
+
+`row_hash = sha256(previous_row_hash + payload)` where `payload` is the change's
+immutable fields joined deterministically. Hashes are filled in at the end of each
+`_run` (SQLite has no built-in hash function, so it's done in Python, in
+`change_id` order). Because each hash depends on the one before it, altering any
+past change invalidates every hash after it, and `verify_integrity` finds the first
+break. The log is *tamper-evident*, not un-editable — the honest, achievable
+property.
+
+### Design note: branching
+
+A branch is a **file-level fork** (`shutil.copyfile`) that shares history up to the
+fork point, recorded in `_dtm_branches`. `merge` is a genuine **three-way merge**:
+base = this database's state at the fork point (`_as_of_by_pk`), and for each row it
+compares base / ours / theirs to apply clean changes. Conflicts (both sides changed
+the same row) are handled by a **strategy**: `manual` reports them and keeps ours;
+`ours`/`theirs` auto-resolve to one side; `newest` compares each side's last-change
+timestamp and takes the more recent. All tested.
+
+### Design note: retention / compaction
+
+`compact(before)` bounds history growth by collapsing every change at or before a
+cutoff into a single baseline snapshot per row (its exact state at the cutoff).
+Time travel for any point **at or after** the cutoff stays correct; older
+fine-grained history is intentionally discarded. Because compaction inserts
+baselines with fresh ids, `as_of` orders candidates by **(timestamp, change_id)**
+rather than id alone, so a cutoff baseline never shadows a newer real change. The
+hash chain is rebuilt afterward and the operation is logged in `_dtm_meta` — so
+compaction is itself an auditable, deliberate act rather than silent tampering.
