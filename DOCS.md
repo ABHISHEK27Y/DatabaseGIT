@@ -330,8 +330,9 @@ dtm/
 
 demo.py          Runnable end-to-end story (Section 10).
 tests/
-  test_dtm.py    12 unit tests: logging, blame, time-travel as-of, deletes,
-                 baseline, diff, schema-blame, revert, tags, resolution, stats.
+  test_dtm.py    27 unit tests: logging, blame, time-travel, revert, tags,
+                 diff, schema-blame, hash-chain integrity, anomalies, branching
+                 & merge strategies, compaction, edge cases, bulk-write speed.
 README.md        Quick start + overview.
 DOCS.md          This document (feature reference).
 ARCHITECTURE.md  Layered design, the how/why of every major decision.

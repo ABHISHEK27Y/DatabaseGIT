@@ -196,8 +196,10 @@ dtm/
   core.py    Engine. The only file that talks to SQLite. All history logic.
   cli.py     Thin argparse front-end; formats engine output for the terminal.
   web.py     Thin HTTP front-end; JSON API + embedded single-page app.
+  report.py  HTML / CSV audit-report export.
+  postgres.py / mysql.py   Optional server backends (need a driver + a server).
   __main__.py / __init__.py   packaging (`python -m dtm`, exports).
-tests/test_dtm.py   12 unit tests exercising the engine directly.
+tests/test_dtm.py   27 unit tests exercising the engine directly.
 demo.py             Narrative end-to-end script.
 README.md           Quick start.  DOCS.md  Feature reference.  ARCHITECTURE.md  This.
 ```
