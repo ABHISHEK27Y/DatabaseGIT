@@ -1,0 +1,217 @@
+"""Tests for the Database Time Machine engine."""
+
+import os
+import sys
+import tempfile
+import time
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from dtm.core import TimeMachine  # noqa: E402
+
+
+class TimeMachineTests(unittest.TestCase):
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".sqlite")
+        os.close(fd)
+        os.unlink(self.path)  # start clean
+        self.tm = TimeMachine(self.path)
+        self.tm.init_repo()
+
+    def tearDown(self):
+        self.tm.close()
+        try:
+            os.unlink(self.path)
+        except OSError:
+            pass
+
+    def _ts(self):
+        # ensure strictly increasing timestamps between operations
+        time.sleep(0.005)
+        from dtm.core import _now
+        t = _now()
+        time.sleep(0.005)
+        return t
+
+    def test_insert_update_delete_are_logged(self):
+        self.tm.exec_sql(
+            "CREATE TABLE products(id INTEGER PRIMARY KEY, name TEXT, price REAL)",
+            author="alice", message="create",
+        )
+        self.tm.exec_sql(
+            "INSERT INTO products(name, price) VALUES('Widget', 9.99)",
+            author="alice", message="add widget",
+        )
+        self.tm.exec_sql(
+            "UPDATE products SET price = 12.50 WHERE name='Widget'",
+            author="bob", message="raise price",
+        )
+        log = self.tm.log(table="products")
+        ops = sorted(r["op"] for r in log)
+        self.assertEqual(ops, ["INSERT", "UPDATE"])
+
+    def test_blame_reports_last_author(self):
+        self.tm.exec_sql(
+            "CREATE TABLE products(id INTEGER PRIMARY KEY, name TEXT, price REAL)",
+            author="alice", message="create",
+        )
+        self.tm.exec_sql(
+            "INSERT INTO products(name, price) VALUES('Widget', 9.99)",
+            author="alice", message="add widget",
+        )
+        self.tm.exec_sql(
+            "UPDATE products SET price = 12.50 WHERE id=1",
+            author="bob", message="raise price",
+        )
+        res = self.tm.blame("products", 1, "price")
+        self.assertIsNotNone(res)
+        self.assertEqual(res["author"], "bob")
+        self.assertEqual(res["old_value"], 9.99)
+        self.assertEqual(res["new_value"], 12.5)
+
+    def test_time_travel_as_of(self):
+        self.tm.exec_sql(
+            "CREATE TABLE products(id INTEGER PRIMARY KEY, name TEXT, price REAL)",
+            author="alice", message="create",
+        )
+        self.tm.exec_sql(
+            "INSERT INTO products(name, price) VALUES('Widget', 9.99)",
+            author="alice", message="add",
+        )
+        t_before_raise = self._ts()
+        self.tm.exec_sql(
+            "UPDATE products SET price = 20.0 WHERE id=1",
+            author="bob", message="raise",
+        )
+        t_after = self._ts()
+
+        old_state = self.tm.as_of("products", t_before_raise)
+        self.assertEqual(len(old_state), 1)
+        self.assertEqual(old_state[0]["price"], 9.99)
+
+        new_state = self.tm.as_of("products", t_after)
+        self.assertEqual(new_state[0]["price"], 20.0)
+
+    def test_deleted_row_absent_in_later_snapshot(self):
+        self.tm.exec_sql(
+            "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)",
+            author="a", message="create",
+        )
+        self.tm.exec_sql("INSERT INTO t(v) VALUES('x')", author="a", message="add")
+        t_mid = self._ts()
+        self.tm.exec_sql("DELETE FROM t WHERE id=1", author="a", message="del")
+        t_end = self._ts()
+        self.assertEqual(len(self.tm.as_of("t", t_mid)), 1)
+        self.assertEqual(len(self.tm.as_of("t", t_end)), 0)
+
+    def test_baseline_of_preexisting_rows(self):
+        # Rows created before tracking a table (in the same exec that creates it)
+        # should still be reconstructable.
+        self.tm.exec_sql(
+            "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT);"
+            "INSERT INTO t(v) VALUES('seed1');"
+            "INSERT INTO t(v) VALUES('seed2');",
+            author="a", message="seed",
+        )
+        now = self._ts()
+        state = self.tm.as_of("t", now)
+        self.assertEqual(len(state), 2)
+
+    def test_diff_between_two_times(self):
+        self.tm.exec_sql(
+            "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)",
+            author="a", message="create",
+        )
+        self.tm.exec_sql("INSERT INTO t(v) VALUES('a')", author="a", message="add a")
+        t1 = self._ts()
+        self.tm.exec_sql("INSERT INTO t(v) VALUES('b')", author="a", message="add b")
+        self.tm.exec_sql("UPDATE t SET v='A' WHERE id=1", author="a", message="edit")
+        t2 = self._ts()
+        d = self.tm.diff("t", t1, t2)
+        self.assertEqual(len(d["added"]), 1)
+        self.assertEqual(len(d["changed"]), 1)
+        self.assertEqual(len(d["removed"]), 0)
+
+    def test_revert_restores_past_state(self):
+        self.tm.exec_sql(
+            "CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT, plan TEXT)",
+            author="alice", message="create",
+        )
+        self.tm.exec_sql(
+            "INSERT INTO users(name, plan) VALUES('Ravi','free');"
+            "INSERT INTO users(name, plan) VALUES('Meera','pro');",
+            author="alice", message="seed",
+        )
+        good = self._ts()
+        # a bad deploy: delete a user and change another
+        self.tm.exec_sql("DELETE FROM users WHERE name='Ravi'", author="bob", message="oops")
+        self.tm.exec_sql("UPDATE users SET plan='x' WHERE name='Meera'", author="bob", message="oops2")
+        self.assertEqual(len(self.tm.query("SELECT * FROM users")), 1)
+
+        summary = self.tm.revert("users", good, author="carol", message="restore")
+        self.assertEqual(summary["inserted"], 1)   # Ravi comes back
+        self.assertEqual(summary["updated"], 1)     # Meera restored
+        live = {r["name"]: r["plan"] for r in self.tm.query("SELECT * FROM users")}
+        self.assertEqual(live, {"Ravi": "free", "Meera": "pro"})
+
+    def test_revert_is_itself_recorded(self):
+        self.tm.exec_sql("CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)", author="a", message="c")
+        self.tm.exec_sql("INSERT INTO t(v) VALUES('x')", author="a", message="add")
+        good = self._ts()
+        self.tm.exec_sql("DELETE FROM t WHERE id=1", author="a", message="del")
+        before = len(self.tm.log(table="t", limit=1000))
+        self.tm.revert("t", good, author="a", message="restore")
+        after = len(self.tm.log(table="t", limit=1000))
+        self.assertGreater(after, before)  # revert added change rows
+
+    def test_tags_and_resolution(self):
+        self.tm.exec_sql("CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)", author="a", message="c")
+        self.tm.exec_sql("INSERT INTO t(v) VALUES('one')", author="a", message="add")
+        self.tm.tag("v1", author="a", message="first release")
+        self.tm.exec_sql("UPDATE t SET v='two' WHERE id=1", author="a", message="edit")
+
+        ts = self.tm.resolve_time("v1")
+        self.assertTrue(ts and ts != "v1")  # resolved to a real timestamp
+        state = self.tm.as_of("t", ts)
+        self.assertEqual(state[0]["v"], "one")
+        # unknown spec passes through unchanged
+        self.assertEqual(self.tm.resolve_time("2020-01-01T00:00:00+00:00"),
+                         "2020-01-01T00:00:00+00:00")
+
+    def test_revert_by_tag(self):
+        self.tm.exec_sql("CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)", author="a", message="c")
+        self.tm.exec_sql("INSERT INTO t(v) VALUES('keep')", author="a", message="add")
+        self.tm.tag("safe", author="a")
+        self.tm.exec_sql("DELETE FROM t", author="a", message="wipe")
+        self.assertEqual(len(self.tm.query("SELECT * FROM t")), 0)
+        self.tm.revert("t", "safe", author="a", message="restore from tag")
+        self.assertEqual(len(self.tm.query("SELECT * FROM t")), 1)
+
+    def test_stats(self):
+        self.tm.exec_sql("CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)", author="alice", message="c")
+        self.tm.exec_sql("INSERT INTO t(v) VALUES('a')", author="alice", message="add")
+        self.tm.exec_sql("UPDATE t SET v='b' WHERE id=1", author="bob", message="edit")
+        s = self.tm.stats()
+        self.assertEqual(s["total_changes"], 2)  # 1 insert + 1 update
+        self.assertEqual(s["by_op"].get("UPDATE"), 1)
+        authors = {a["author"] for a in s["by_author"]}
+        self.assertEqual(authors, {"alice", "bob"})
+
+    def test_schema_blame(self):
+        self.tm.exec_sql(
+            "CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT)",
+            author="alice", message="create",
+        )
+        self.tm.exec_sql(
+            "ALTER TABLE t ADD COLUMN email TEXT",
+            author="carol", message="add email column",
+        )
+        res = self.tm.schema_blame("t", "email")
+        self.assertIsNotNone(res)
+        self.assertEqual(res["author"], "carol")
+        self.assertIsNotNone(res["definition"])
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

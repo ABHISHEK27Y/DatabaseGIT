@@ -1,0 +1,20 @@
+# databases produced by demos / runs
+*.sqlite
+*.sqlite3
+*.db
+demo.sqlite
+cli_demo.sqlite
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
