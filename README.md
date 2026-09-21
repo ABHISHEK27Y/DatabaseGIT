@@ -29,10 +29,23 @@ python demo.py                       # narrated end-to-end story in the terminal
 python -m dtm serve demo.sqlite      # open http://127.0.0.1:8080 for the web UI
 ```
 
-> **Adding your own screenshots:** run the web UI, screenshot the **Overview**,
-> **Timeline**, and **Attribution** views, and drop them in `assets/` as
-> `ui-overview.png`, `ui-timeline.png`, `ui-blame.png` — then they can be embedded
-> here.
+## Screenshots
+
+**Timeline** — every change as a git-style graph, colour-coded by operation:
+
+![Timeline view](assets/ui-timeline.svg)
+
+**Overview** — a dashboard of the whole history, with an integrity check:
+
+![Overview dashboard](assets/ui-overview.svg)
+
+**Attribution** — who last changed a column, why, and the row's full history:
+
+![Attribution view](assets/ui-blame.svg)
+
+> New to the project? Start with **[How it works](docs/HOW_IT_WORKS.md)** for a
+> plain-English tour, or **[the demo script](docs/DEMO_SCRIPT.md)** to record a
+> 2-minute walkthrough.
 
 ---
 

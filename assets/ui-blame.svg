@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="640" viewBox="0 0 1000 640" role="img" aria-label="Attribution (blame) view">
+  <defs>
+    <style>
+      .serif{font-family:Georgia,'Times New Roman',serif}
+      .sans{font-family:-apple-system,'Segoe UI',Roboto,sans-serif}
+      .mono{font-family:ui-monospace,Consolas,monospace}
+    </style>
+  </defs>
+  <rect width="1000" height="640" fill="#f6f4ee"/>
+
+  <!-- header -->
+  <line x1="0" y1="60" x2="1000" y2="60" stroke="#e6e2d7"/>
+  <rect x="22" y="16" width="28" height="28" rx="7" fill="#fff" stroke="#1a5f4a" stroke-width="1.5"/>
+  <text x="36" y="36" text-anchor="middle" class="serif" font-size="17" font-weight="600" fill="#1a5f4a">T</text>
+  <text x="62" y="31" class="serif" font-size="17" font-weight="600" fill="#1c1b18">Database Time Machine</text>
+  <text x="62" y="47" class="sans" font-size="10" letter-spacing="1.5" fill="#7b786f">VERSION HISTORY FOR YOUR DATA</text>
+  <rect x="852" y="18" width="126" height="24" rx="12" fill="#fff" stroke="#e6e2d7"/>
+  <text x="915" y="34" text-anchor="middle" class="sans" font-size="11" fill="#7b786f">1 table tracked</text>
+
+  <!-- sidebar -->
+  <line x1="190" y1="60" x2="190" y2="640" stroke="#e6e2d7"/>
+  <text x="24" y="96" class="sans" font-size="10" letter-spacing="2" fill="#a7a399">VIEWS</text>
+  <g class="sans" font-size="13.5" fill="#413f39">
+    <text x="24" y="126">Overview</text>
+    <text x="24" y="160">Timeline</text>
+    <text x="24" y="194">Time travel</text>
+    <text x="24" y="228">Compare</text>
+    <rect x="12" y="242" width="166" height="30" rx="8" fill="#e9f1ec"/>
+    <rect x="12" y="242" width="2.5" height="30" fill="#1a5f4a"/>
+    <text x="24" y="262" fill="#1a5f4a" font-weight="600">Attribution</text>
+    <text x="24" y="296">Schema</text>
+    <text x="24" y="330">Checkpoints</text>
+    <text x="24" y="364">Branches</text>
+    <text x="24" y="398">Anomalies</text>
+    <text x="24" y="432">Integrity</text>
+  </g>
+
+  <!-- heading -->
+  <text x="224" y="104" class="serif" font-size="26" font-weight="600" fill="#1c1b18">Attribution</text>
+  <text x="224" y="128" class="sans" font-size="13" fill="#7b786f">Who last changed a column of a row, and why.</text>
+
+  <!-- controls -->
+  <g transform="translate(224,150)">
+    <rect x="0" y="18" width="120" height="36" rx="8" fill="#fff" stroke="#e6e2d7"/>
+    <text x="12" y="12" class="sans" font-size="10" letter-spacing="1" fill="#7b786f">TABLE</text>
+    <text x="14" y="41" class="sans" font-size="13" fill="#1c1b18">users</text>
+    <rect x="134" y="18" width="70" height="36" rx="8" fill="#fff" stroke="#e6e2d7"/>
+    <text x="146" y="12" class="sans" font-size="10" letter-spacing="1" fill="#7b786f">ROW (ID)</text>
+    <text x="148" y="41" class="sans" font-size="13" fill="#1c1b18">2</text>
+    <rect x="218" y="18" width="120" height="36" rx="8" fill="#fff" stroke="#e6e2d7"/>
+    <text x="230" y="12" class="sans" font-size="10" letter-spacing="1" fill="#7b786f">COLUMN</text>
+    <text x="232" y="41" class="sans" font-size="13" fill="#1c1b18">plan</text>
+    <rect x="352" y="18" width="76" height="36" rx="8" fill="#1a5f4a"/>
+    <text x="390" y="41" text-anchor="middle" class="sans" font-size="13" font-weight="600" fill="#fff">Trace</text>
+  </g>
+
+  <!-- blame result card -->
+  <g transform="translate(224,230)">
+    <rect x="0" y="0" width="754" height="150" rx="12" fill="#fff" stroke="#e6e2d7"/>
+    <circle cx="46" cy="52" r="23" fill="#e9f1ec" stroke="#e6e2d7"/>
+    <text x="46" y="60" text-anchor="middle" class="serif" font-size="20" font-weight="600" fill="#1a5f4a">B</text>
+
+    <text x="86" y="40" class="serif" font-size="17" font-weight="600" fill="#1c1b18">users.plan
+      <tspan class="sans" font-size="13" font-weight="400" fill="#7b786f">of row 2</tspan></text>
+    <text x="86" y="62" class="sans" font-size="12.5" fill="#7b786f">last changed by
+      <tspan font-weight="600" fill="#1c1b18">bob</tspan> ·
+      <tspan class="mono" font-size="11">2026-09-21T11:07:29.569+00:00</tspan></text>
+
+    <!-- old -> new chips -->
+    <rect x="86" y="80" width="66" height="24" rx="6" fill="#f6eaea"/>
+    <text x="119" y="96" text-anchor="middle" class="sans" font-size="12" fill="#a23b3b">"pro"</text>
+    <text x="162" y="97" class="sans" font-size="14" fill="#a7a399">→</text>
+    <rect x="178" y="80" width="118" height="24" rx="6" fill="#eaf3ee"/>
+    <text x="237" y="96" text-anchor="middle" class="sans" font-size="12" fill="#2f7d5b">"enterprise"</text>
+
+    <text x="86" y="130" class="sans" font-size="12.5" fill="#7b786f">“deploy: upgrade Meera”
+      &#160;·&#160; <tspan fill="#916516" font-weight="700">UPDATE</tspan>
+      &#160;·&#160; change #4</text>
+  </g>
+
+  <!-- history table -->
+  <g transform="translate(224,400)">
+    <text x="0" y="0" class="serif" font-size="15" font-weight="600" fill="#1c1b18">Full history of this row</text>
+    <rect x="0" y="16" width="754" height="180" rx="10" fill="#fff" stroke="#e6e2d7"/>
+    <rect x="0" y="16" width="754" height="34" rx="10" fill="#efece3"/>
+    <rect x="0" y="34" width="754" height="16" fill="#efece3"/>
+    <g class="sans" font-size="10" letter-spacing="1" fill="#7b786f">
+      <text x="18" y="38">#</text><text x="70" y="38">TIMESTAMP</text>
+      <text x="330" y="38">OP</text><text x="430" y="38">AUTHOR</text><text x="540" y="38">MESSAGE</text>
+    </g>
+    <g class="sans" font-size="12.5" fill="#413f39">
+      <text x="18" y="76" class="mono" fill="#7b786f">2</text>
+      <text x="70" y="76" class="mono" font-size="11">2026-09-21T11:07:29.538</text>
+      <rect x="330" y="65" width="58" height="17" rx="4" fill="#eaf3ee"/><text x="342" y="77" font-size="10.5" font-weight="700" fill="#2f7d5b">INSERT</text>
+      <text x="430" y="76">alice</text><text x="540" y="76">seed initial users</text>
+      <line x1="0" y1="92" x2="754" y2="92" stroke="#efece3"/>
+
+      <text x="18" y="124" class="mono" fill="#7b786f">4</text>
+      <text x="70" y="124" class="mono" font-size="11">2026-09-21T11:07:29.569</text>
+      <rect x="330" y="113" width="62" height="17" rx="4" fill="#f6efe0"/><text x="342" y="125" font-size="10.5" font-weight="700" fill="#916516">UPDATE</text>
+      <text x="430" y="124">bob</text><text x="540" y="124">deploy: upgrade Meera</text>
+      <line x1="0" y1="140" x2="754" y2="140" stroke="#efece3"/>
+
+      <text x="18" y="172" class="mono" fill="#7b786f">6</text>
+      <text x="70" y="172" class="mono" font-size="11">2026-09-21T11:07:29.653</text>
+      <rect x="330" y="161" width="62" height="17" rx="4" fill="#f6efe0"/><text x="342" y="173" font-size="10.5" font-weight="700" fill="#916516">UPDATE</text>
+      <text x="430" y="172">carol</text><text x="540" y="172">restore users after bad deploy</text>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="640" viewBox="0 0 1000 640" role="img" aria-label="Timeline view — git-graph of changes">
+  <defs>
+    <style>
+      .serif{font-family:Georgia,'Times New Roman',serif}
+      .sans{font-family:-apple-system,'Segoe UI',Roboto,sans-serif}
+      .mono{font-family:ui-monospace,Consolas,monospace}
+    </style>
+  </defs>
+  <rect width="1000" height="640" fill="#f6f4ee"/>
+
+  <!-- header -->
+  <rect x="0" y="0" width="1000" height="60" fill="#f6f4ee"/>
+  <line x1="0" y1="60" x2="1000" y2="60" stroke="#e6e2d7"/>
+  <rect x="22" y="16" width="28" height="28" rx="7" fill="#fff" stroke="#1a5f4a" stroke-width="1.5"/>
+  <text x="36" y="36" text-anchor="middle" class="serif" font-size="17" font-weight="600" fill="#1a5f4a">T</text>
+  <text x="62" y="31" class="serif" font-size="17" font-weight="600" fill="#1c1b18">Database Time Machine</text>
+  <text x="62" y="47" class="sans" font-size="10" letter-spacing="1.5" fill="#7b786f">VERSION HISTORY FOR YOUR DATA</text>
+  <rect x="852" y="18" width="126" height="24" rx="12" fill="#fff" stroke="#e6e2d7"/>
+  <text x="915" y="34" text-anchor="middle" class="sans" font-size="11" fill="#7b786f">1 table tracked</text>
+
+  <!-- sidebar -->
+  <line x1="190" y1="60" x2="190" y2="640" stroke="#e6e2d7"/>
+  <text x="24" y="96" class="sans" font-size="10" letter-spacing="2" fill="#a7a399">VIEWS</text>
+  <g class="sans" font-size="13.5" fill="#413f39">
+    <text x="24" y="126">Overview</text>
+    <rect x="12" y="140" width="166" height="30" rx="8" fill="#e9f1ec"/>
+    <rect x="12" y="140" width="2.5" height="30" fill="#1a5f4a"/>
+    <text x="24" y="160" fill="#1a5f4a" font-weight="600">Timeline</text>
+    <text x="24" y="194">Time travel</text>
+    <text x="24" y="228">Compare</text>
+    <text x="24" y="262">Attribution</text>
+    <text x="24" y="296">Schema</text>
+    <text x="24" y="330">Checkpoints</text>
+    <text x="24" y="364">Branches</text>
+    <text x="24" y="398">Anomalies</text>
+    <text x="24" y="432">Integrity</text>
+  </g>
+
+  <!-- main heading -->
+  <text x="224" y="104" class="serif" font-size="26" font-weight="600" fill="#1c1b18">Timeline</text>
+  <text x="224" y="128" class="sans" font-size="13" fill="#7b786f">Every recorded change, most recent first.</text>
+
+  <!-- git graph -->
+  <g transform="translate(224,150)">
+    <!-- rail -->
+    <line x1="8" y1="14" x2="8" y2="430" stroke="#e6e2d7" stroke-width="1.5"/>
+
+    <!-- node macro rows -->
+    <!-- #6 UPDATE -->
+    <circle cx="8" cy="26" r="6" fill="#f6f4ee" stroke="#916516" stroke-width="2.5"/>
+    <g transform="translate(28,10)">
+      <rect x="24" y="0" width="66" height="18" rx="4" fill="#f6efe0"/>
+      <circle cx="33" cy="9" r="2.5" fill="#916516"/>
+      <text x="42" y="13" class="sans" font-size="10.5" font-weight="700" fill="#916516">UPDATE</text>
+      <text x="100" y="13" class="sans" font-size="12" fill="#7b786f">users · row 2</text>
+      <text x="184" y="13" class="mono" font-size="11" fill="#a7a399">#6</text>
+      <text x="720" y="13" class="mono" font-size="10.5" fill="#a7a399">2026-09-21T11:07:29</text>
+      <text x="24" y="34" class="sans" font-size="13.5" fill="#1c1b18">restore users after bad deploy</text>
+      <text x="24" y="52" class="sans" font-size="12" fill="#7b786f">by <tspan font-weight="600" fill="#1c1b18">carol</tspan></text>
+    </g>
+    <line x1="0" y1="76" x2="740" y2="76" stroke="#efece3"/>
+
+    <!-- #5 INSERT -->
+    <circle cx="8" cy="102" r="6" fill="#f6f4ee" stroke="#2f7d5b" stroke-width="2.5"/>
+    <g transform="translate(28,86)">
+      <rect x="24" y="0" width="60" height="18" rx="4" fill="#eaf3ee"/>
+      <circle cx="33" cy="9" r="2.5" fill="#2f7d5b"/>
+      <text x="42" y="13" class="sans" font-size="10.5" font-weight="700" fill="#2f7d5b">INSERT</text>
+      <text x="94" y="13" class="sans" font-size="12" fill="#7b786f">users · row 1</text>
+      <text x="178" y="13" class="mono" font-size="11" fill="#a7a399">#5</text>
+      <text x="720" y="13" class="mono" font-size="10.5" fill="#a7a399">2026-09-21T11:07:29</text>
+      <text x="24" y="34" class="sans" font-size="13.5" fill="#1c1b18">restore users after bad deploy</text>
+      <text x="24" y="52" class="sans" font-size="12" fill="#7b786f">by <tspan font-weight="600" fill="#1c1b18">carol</tspan></text>
+    </g>
+    <line x1="0" y1="152" x2="740" y2="152" stroke="#efece3"/>
+
+    <!-- #4 UPDATE -->
+    <circle cx="8" cy="178" r="6" fill="#f6f4ee" stroke="#916516" stroke-width="2.5"/>
+    <g transform="translate(28,162)">
+      <rect x="24" y="0" width="66" height="18" rx="4" fill="#f6efe0"/>
+      <circle cx="33" cy="9" r="2.5" fill="#916516"/>
+      <text x="42" y="13" class="sans" font-size="10.5" font-weight="700" fill="#916516">UPDATE</text>
+      <text x="100" y="13" class="sans" font-size="12" fill="#7b786f">users · row 2</text>
+      <text x="184" y="13" class="mono" font-size="11" fill="#a7a399">#4</text>
+      <text x="720" y="13" class="mono" font-size="10.5" fill="#a7a399">2026-09-21T11:07:29</text>
+      <text x="24" y="34" class="sans" font-size="13.5" fill="#1c1b18">deploy: upgrade Meera</text>
+      <text x="24" y="52" class="sans" font-size="12" fill="#7b786f">by <tspan font-weight="600" fill="#1c1b18">bob</tspan></text>
+    </g>
+    <line x1="0" y1="228" x2="740" y2="228" stroke="#efece3"/>
+
+    <!-- #3 DELETE -->
+    <circle cx="8" cy="254" r="6" fill="#f6f4ee" stroke="#a23b3b" stroke-width="2.5"/>
+    <g transform="translate(28,238)">
+      <rect x="24" y="0" width="64" height="18" rx="4" fill="#f6eaea"/>
+      <circle cx="33" cy="9" r="2.5" fill="#a23b3b"/>
+      <text x="42" y="13" class="sans" font-size="10.5" font-weight="700" fill="#a23b3b">DELETE</text>
+      <text x="98" y="13" class="sans" font-size="12" fill="#7b786f">users · row 1</text>
+      <text x="182" y="13" class="mono" font-size="11" fill="#a7a399">#3</text>
+      <text x="720" y="13" class="mono" font-size="10.5" fill="#a7a399">2026-09-21T11:07:29</text>
+      <text x="24" y="34" class="sans" font-size="13.5" fill="#1c1b18">deploy: cleanup script (BUG: too broad)</text>
+      <text x="24" y="52" class="sans" font-size="12" fill="#7b786f">by <tspan font-weight="600" fill="#1c1b18">bob</tspan></text>
+    </g>
+    <line x1="0" y1="304" x2="740" y2="304" stroke="#efece3"/>
+
+    <!-- #2 INSERT -->
+    <circle cx="8" cy="330" r="6" fill="#f6f4ee" stroke="#2f7d5b" stroke-width="2.5"/>
+    <g transform="translate(28,314)">
+      <rect x="24" y="0" width="60" height="18" rx="4" fill="#eaf3ee"/>
+      <circle cx="33" cy="9" r="2.5" fill="#2f7d5b"/>
+      <text x="42" y="13" class="sans" font-size="10.5" font-weight="700" fill="#2f7d5b">INSERT</text>
+      <text x="94" y="13" class="sans" font-size="12" fill="#7b786f">users · row 2</text>
+      <text x="178" y="13" class="mono" font-size="11" fill="#a7a399">#2</text>
+      <text x="720" y="13" class="mono" font-size="10.5" fill="#a7a399">2026-09-21T11:07:29</text>
+      <text x="24" y="34" class="sans" font-size="13.5" fill="#1c1b18">seed initial users</text>
+      <text x="24" y="52" class="sans" font-size="12" fill="#7b786f">by <tspan font-weight="600" fill="#1c1b18">alice</tspan></text>
+    </g>
+    <line x1="0" y1="380" x2="740" y2="380" stroke="#efece3"/>
+
+    <!-- #1 INSERT -->
+    <circle cx="8" cy="406" r="6" fill="#f6f4ee" stroke="#2f7d5b" stroke-width="2.5"/>
+    <g transform="translate(28,390)">
+      <rect x="24" y="0" width="60" height="18" rx="4" fill="#eaf3ee"/>
+      <circle cx="33" cy="9" r="2.5" fill="#2f7d5b"/>
+      <text x="42" y="13" class="sans" font-size="10.5" font-weight="700" fill="#2f7d5b">INSERT</text>
+      <text x="94" y="13" class="sans" font-size="12" fill="#7b786f">users · row 1</text>
+      <text x="178" y="13" class="mono" font-size="11" fill="#a7a399">#1</text>
+      <text x="720" y="13" class="mono" font-size="10.5" fill="#a7a399">2026-09-21T11:07:29</text>
+      <text x="24" y="34" class="sans" font-size="13.5" fill="#1c1b18">seed initial users</text>
+      <text x="24" y="52" class="sans" font-size="12" fill="#7b786f">by <tspan font-weight="600" fill="#1c1b18">alice</tspan></text>
+    </g>
+  </g>
+</svg>
