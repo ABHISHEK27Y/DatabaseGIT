@@ -29,6 +29,13 @@ python demo.py                       # narrated end-to-end story in the terminal
 python -m dtm serve demo.sqlite      # open http://127.0.0.1:8080 for the web UI
 ```
 
+## Demo
+
+The whole story — create a table, blame a change, a bad deploy wipes the data,
+time-travel to before it, and one-command undo — as real CLI output:
+
+![Demo](assets/demo.gif)
+
 ## Screenshots
 
 **Timeline** — every change as a git-style graph, colour-coded by operation:
