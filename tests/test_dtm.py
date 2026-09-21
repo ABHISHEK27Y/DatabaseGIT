@@ -371,6 +371,26 @@ class TimeMachineTests(unittest.TestCase):
         self.tm.exec_sql("INSERT INTO ok(v) VALUES('y')", author="a", message="add2")
         self.assertTrue(any(r["tbl"] == "ok" for r in self.tm.log(limit=100)))
 
+    def test_now_is_strictly_monotonic(self):
+        # Rapid calls must never collide or go backwards, even on a coarse clock.
+        from dtm.core import _now
+        vals = [_now() for _ in range(2000)]
+        self.assertEqual(vals, sorted(vals))
+        self.assertEqual(len(set(vals)), len(vals))
+
+    def test_checkpoint_excludes_change_in_same_tick(self):
+        # A tag then an immediate change (no sleep) must not be swallowed by
+        # "as of the tag" -- regression for the Windows coarse-clock bug.
+        self.tm.exec_sql("CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)", author="a", message="c")
+        self.tm.exec_sql("INSERT INTO t(v) VALUES('a')", author="a", message="add")
+        self.tm.tag("cp", author="a")
+        self.tm.exec_sql("UPDATE t SET v='b' WHERE id=1", author="a", message="edit")
+        state = self.tm.as_of("t", self.tm.resolve_time("cp"))
+        self.assertEqual(state[0]["v"], "a")
+        # and revert-to-tag brings back exactly that state
+        self.tm.revert("t", "cp", author="a", message="restore")
+        self.assertEqual(self.tm.query("SELECT v FROM t WHERE id=1")[0]["v"], "a")
+
     def test_bulk_write_captures_all(self):
         # A large batch is captured completely and stays reconstructable.
         # (No wall-clock assertion here -- CI runners vary too much for that;

@@ -26,21 +26,35 @@ import re
 import shutil
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 # Prefixes / names reserved by the engine. User tables never start with "_dtm_".
 META_PREFIX = "_dtm_"
 INTERNAL_TABLES = {"sqlite_sequence"}
 
+# The last timestamp handed out, so _now() can stay strictly monotonic even when
+# the system clock is coarse (see _now).
+_last_now: datetime | None = None
+
 
 def _now() -> str:
-    """UTC timestamp, ISO-8601, microsecond precision.
+    """UTC timestamp, ISO-8601, microsecond precision, **strictly increasing**.
 
     Lexicographic string ordering of this format matches chronological order,
-    which is what the time-travel queries rely on.
+    which is what the time-travel queries rely on. But some systems (notably
+    Windows) have a coarse clock (~16 ms), so two events in quick succession --
+    e.g. creating a checkpoint and then making a change -- could otherwise get
+    the *same* timestamp. That would make "as of the checkpoint" ambiguous and
+    wrongly include the later change. To prevent it, each call returns a value at
+    least one microsecond after the previous one.
     """
-    return datetime.now(timezone.utc).isoformat()
+    global _last_now
+    t = datetime.now(timezone.utc)
+    if _last_now is not None and t <= _last_now:
+        t = _last_now + timedelta(microseconds=1)
+    _last_now = t
+    return t.isoformat()
 
 
 class TimeMachineError(Exception):
