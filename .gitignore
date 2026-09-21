@@ -1,7 +1,9 @@
-# databases produced by demos / runs
+# databases produced by demos / runs (and their WAL sidecars)
 *.sqlite
 *.sqlite3
 *.db
+*.sqlite-wal
+*.sqlite-shm
 demo.sqlite
 cli_demo.sqlite
 

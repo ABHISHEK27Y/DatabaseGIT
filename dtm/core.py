@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 from contextlib import contextmanager
@@ -52,6 +53,14 @@ class TimeMachine:
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
+        # WAL + synchronous=NORMAL is the standard "fast but durable" combo:
+        # it turns per-row trigger writes from ~10s to ~0.2s for a 2000-change
+        # batch, without the corruption risk of synchronous=OFF.
+        try:
+            self.conn.execute("PRAGMA journal_mode = WAL")
+            self.conn.execute("PRAGMA synchronous = NORMAL")
+        except sqlite3.OperationalError:  # e.g. a read-only or network filesystem
+            pass
         self._check_json1()
 
     # ------------------------------------------------------------------ #
@@ -204,20 +213,40 @@ class TimeMachine:
     # ------------------------------------------------------------------ #
     # tracking / triggers
     # ------------------------------------------------------------------ #
+    def _str_literal(self, s: str) -> str:
+        """A safely-quoted SQL string literal (single quotes doubled)."""
+        return "'" + s.replace("'", "''") + "'"
+
+    def _trigger_name(self, table: str, suffix: str) -> str:
+        """A valid, unique, deterministic trigger identifier for any table name
+        (handles spaces, quotes, unicode, collisions)."""
+        safe = re.sub(r"\W", "_", table)[:40]
+        digest = hashlib.md5(table.encode("utf-8")).hexdigest()[:8]
+        return f'"{META_PREFIX}{safe}_{digest}_{suffix}"'
+
+    def _has_rowid(self, table: str) -> bool:
+        """False for WITHOUT ROWID tables (which have no `rowid` to track by)."""
+        try:
+            self.conn.execute(f'SELECT rowid FROM {self._quote_ident(table)} LIMIT 0')
+            return True
+        except sqlite3.OperationalError:
+            return False
+
     def _json_object_expr(self, table: str, alias: str) -> str:
         """Build a json_object(...) expression over all columns of `table`,
-        reading from the NEW/OLD trigger alias."""
+        reading from the NEW/OLD trigger alias. Column names are safely quoted."""
         parts = []
         for col in self.columns(table):
             name = col["name"]
-            parts.append(f"'{name}', {alias}.{self._quote_ident(name)}")
+            parts.append(f"{self._str_literal(name)}, {alias}.{self._quote_ident(name)}")
         return f"json_object({', '.join(parts)})" if parts else "json_object()"
 
     def _install_triggers(self, table: str) -> None:
         c = self.conn
         qt = self._quote_ident(table)
+        tbl_lit = self._str_literal(table)
         for suffix in ("ins", "upd", "del"):
-            c.execute(f"DROP TRIGGER IF EXISTS {META_PREFIX}{table}_{suffix}")
+            c.execute(f"DROP TRIGGER IF EXISTS {self._trigger_name(table, suffix)}")
 
         new_obj = self._json_object_expr(table, "NEW")
         old_obj = self._json_object_expr(table, "OLD")
@@ -225,33 +254,33 @@ class TimeMachine:
 
         c.execute(
             f"""
-            CREATE TRIGGER {META_PREFIX}{table}_ins AFTER INSERT ON {qt}
+            CREATE TRIGGER {self._trigger_name(table, 'ins')} AFTER INSERT ON {qt}
             BEGIN
                 INSERT INTO {META_PREFIX}changes
                     (txn_id, ts, tbl, pk, op, old_json, new_json, author, message)
-                VALUES ({ctx % 'txn_id'}, {ctx % 'ts'}, '{table}', NEW.rowid,
+                VALUES ({ctx % 'txn_id'}, {ctx % 'ts'}, {tbl_lit}, NEW.rowid,
                         'INSERT', NULL, {new_obj}, {ctx % 'author'}, {ctx % 'message'});
             END;
             """
         )
         c.execute(
             f"""
-            CREATE TRIGGER {META_PREFIX}{table}_upd AFTER UPDATE ON {qt}
+            CREATE TRIGGER {self._trigger_name(table, 'upd')} AFTER UPDATE ON {qt}
             BEGIN
                 INSERT INTO {META_PREFIX}changes
                     (txn_id, ts, tbl, pk, op, old_json, new_json, author, message)
-                VALUES ({ctx % 'txn_id'}, {ctx % 'ts'}, '{table}', NEW.rowid,
+                VALUES ({ctx % 'txn_id'}, {ctx % 'ts'}, {tbl_lit}, NEW.rowid,
                         'UPDATE', {old_obj}, {new_obj}, {ctx % 'author'}, {ctx % 'message'});
             END;
             """
         )
         c.execute(
             f"""
-            CREATE TRIGGER {META_PREFIX}{table}_del AFTER DELETE ON {qt}
+            CREATE TRIGGER {self._trigger_name(table, 'del')} AFTER DELETE ON {qt}
             BEGIN
                 INSERT INTO {META_PREFIX}changes
                     (txn_id, ts, tbl, pk, op, old_json, new_json, author, message)
-                VALUES ({ctx % 'txn_id'}, {ctx % 'ts'}, '{table}', OLD.rowid,
+                VALUES ({ctx % 'txn_id'}, {ctx % 'ts'}, {tbl_lit}, OLD.rowid,
                         'DELETE', {old_obj}, NULL, {ctx % 'author'}, {ctx % 'message'});
             END;
             """
@@ -270,7 +299,7 @@ class TimeMachine:
             SELECT
                 (SELECT txn_id FROM {META_PREFIX}context WHERE id=1),
                 (SELECT ts FROM {META_PREFIX}context WHERE id=1),
-                '{table}', t.rowid, 'INSERT', NULL, {obj},
+                {self._str_literal(table)}, t.rowid, 'INSERT', NULL, {obj},
                 (SELECT author FROM {META_PREFIX}context WHERE id=1),
                 'baseline snapshot'
             FROM {qt} t
@@ -279,12 +308,20 @@ class TimeMachine:
 
     def resync_tracking(self) -> None:
         """Install triggers on any user table not yet tracked (and baseline it).
-        Also refreshes triggers so column changes are picked up."""
+        Also refreshes triggers so column changes are picked up.
+
+        WITHOUT ROWID tables have no `rowid` to key history by, so they are
+        skipped gracefully (recorded in _dtm_meta) rather than crashing.
+        """
         tracked = {
             r["tbl"]
             for r in self.conn.execute(f"SELECT tbl FROM {META_PREFIX}tracked")
         }
+        skipped = []
         for table in self.user_tables():
+            if not self._has_rowid(table):
+                skipped.append(table)
+                continue
             first_time = table not in tracked
             self._install_triggers(table)
             if first_time:
@@ -294,6 +331,12 @@ class TimeMachine:
                     f"VALUES (?, (SELECT ts FROM {META_PREFIX}context WHERE id=1))",
                     (table,),
                 )
+        if skipped:
+            self.conn.execute(
+                f"INSERT OR REPLACE INTO {META_PREFIX}meta(key, value) VALUES "
+                f"('untracked_without_rowid', ?)",
+                (json.dumps(skipped),),
+            )
 
     # ------------------------------------------------------------------ #
     # context / transactions
@@ -859,6 +902,11 @@ class TimeMachine:
         one's history up to now. Returns the new file's path."""
         newpath = self._branch_path(name)
         self.conn.commit()
+        # flush the WAL into the main db file so the copy is complete
+        try:
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.OperationalError:
+            pass
         shutil.copyfile(self.path, newpath)
         self.conn.execute(
             f"INSERT OR REPLACE INTO {META_PREFIX}branches"

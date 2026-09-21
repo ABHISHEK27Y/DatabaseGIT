@@ -390,9 +390,18 @@ All of this is real output verified by the test suite.
 - **Attribution is cooperative** (see Section 6), not enforced by real DB auth.
 - **Storage grows with history** — every version of every changed row is kept; no
   compaction/retention policy yet.
-- **Web UI is read-only** — the one write path (revert) is intentionally CLI-only.
-- **Assumes ordinary `rowid` tables** (not `WITHOUT ROWID` tables).
-- **SQLite only** — no Postgres/MySQL adapters yet.
+- **`WITHOUT ROWID` tables are skipped** (they have no `rowid` to key history by).
+  They are detected and skipped gracefully — recorded in `_dtm_meta`, never a crash.
+  Ordinary tables, including those with composite primary keys, are fully tracked.
+- **Attribution is cooperative on SQLite** (Postgres/MySQL backends use the real
+  authenticated user).
+
+### Performance
+
+Writes go through row-level triggers, so a large batch does real work. The engine
+runs in **WAL mode with `synchronous=NORMAL`**, which keeps a 2,000-change batch at
+roughly **0.2 s** (versus ~10 s with the default rollback journal) while remaining
+crash-safe. Reconstruction (`as-of`) is a single indexed query per row.
 
 ---
 

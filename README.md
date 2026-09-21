@@ -1,3 +1,15 @@
+<p align="center">
+  <img src="assets/banner.svg" alt="Database Time Machine" width="100%">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/tests-27%20passing-2f7d5b" alt="tests">
+  <img src="https://img.shields.io/badge/python-3.9%20%7C%203.11%20%7C%203.13-1a5f4a" alt="python">
+  <img src="https://img.shields.io/badge/dependencies-zero-1a5f4a" alt="dependencies">
+  <img src="https://img.shields.io/badge/license-MIT-7b786f" alt="license">
+  <a href="https://github.com/ABHISHEK27Y/DatabaseGIT/actions"><img src="https://github.com/ABHISHEK27Y/DatabaseGIT/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
 # Database Time Machine
 
 **Git for databases.** Track every schema and data change to a SQLite database,
@@ -9,6 +21,18 @@ with author + message + timestamp, and answer questions no ordinary database can
 
 Pure Python standard library — no external dependencies, no database server.
 Runs anywhere Python 3.9+ runs.
+
+### See it running
+
+```bash
+python demo.py                       # narrated end-to-end story in the terminal
+python -m dtm serve demo.sqlite      # open http://127.0.0.1:8080 for the web UI
+```
+
+> **Adding your own screenshots:** run the web UI, screenshot the **Overview**,
+> **Timeline**, and **Attribution** views, and drop them in `assets/` as
+> `ui-overview.png`, `ui-timeline.png`, `ui-blame.png` — then they can be embedded
+> here.
 
 ---
 
@@ -138,10 +162,13 @@ dtm/
   web.py      # zero-dependency web UI (stdlib http.server)
   report.py   # HTML / CSV audit-report export
   postgres.py # optional PostgreSQL backend (needs psycopg + a server)
+  mysql.py    # optional MySQL / MariaDB backend (needs PyMySQL + a server)
   __main__.py # enables `python -m dtm`
 demo.py       # end-to-end walkthrough of every feature
 tests/
-  test_dtm.py # 19 unit tests for the engine
+  test_dtm.py # 27 unit tests for the engine
+assets/banner.svg         # README banner
+LICENSE                   # MIT
 pyproject.toml            # `pip install .` -> a global `dtm` command
 .github/workflows/ci.yml  # tests on Linux + Windows, Python 3.9 / 3.11 / 3.13
 ```

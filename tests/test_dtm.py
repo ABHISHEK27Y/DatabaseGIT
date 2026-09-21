@@ -21,10 +21,11 @@ class TimeMachineTests(unittest.TestCase):
 
     def tearDown(self):
         self.tm.close()
-        try:
-            os.unlink(self.path)
-        except OSError:
-            pass
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                os.unlink(self.path + suffix)
+            except OSError:
+                pass
 
     def _ts(self):
         # ensure strictly increasing timestamps between operations
@@ -329,6 +330,57 @@ class TimeMachineTests(unittest.TestCase):
         self.tm.exec_sql("UPDATE p SET v=2 WHERE id=1", author="a", message="e")
         self.tm.compact(cutoff)
         self.assertTrue(self.tm.verify_integrity()["ok"])
+
+    def test_composite_primary_key_tracked_by_rowid(self):
+        # composite-PK table still has a rowid, so history works
+        self.tm.exec_sql(
+            "CREATE TABLE enroll(student INT, course INT, grade TEXT, PRIMARY KEY(student, course))",
+            author="a", message="create",
+        )
+        self.tm.exec_sql("INSERT INTO enroll VALUES(1, 10, 'A')", author="a", message="add")
+        self.tm.exec_sql("UPDATE enroll SET grade='B' WHERE student=1 AND course=10",
+                         author="b", message="regrade")
+        # rowid of the single row is 1
+        b = self.tm.blame("enroll", 1, "grade")
+        self.assertEqual(b["old_value"], "A")
+        self.assertEqual(b["new_value"], "B")
+
+    def test_weird_table_and_column_names(self):
+        self.tm.exec_sql(
+            'CREATE TABLE "odd name" ("it\'s a col" TEXT, val INT)',
+            author="a", message="create",
+        )
+        self.tm.exec_sql('INSERT INTO "odd name" VALUES(\'x\', 1)', author="a", message="add")
+        self.tm.exec_sql('UPDATE "odd name" SET val=2', author="b", message="edit")
+        log = self.tm.log(table="odd name", limit=100)
+        self.assertTrue(any(r["op"] == "UPDATE" for r in log))
+        # the quirky column name is captured in the JSON payload
+        self.assertIn("it's a col", log[0]["new_json"])
+
+    def test_without_rowid_table_skipped_gracefully(self):
+        # a WITHOUT ROWID table cannot be tracked by rowid; it must not crash
+        self.tm.exec_sql(
+            "CREATE TABLE kv(k TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID",
+            author="a", message="create",
+        )
+        # writing to it should not raise, even though it is untracked
+        self.tm.exec_sql("INSERT INTO kv VALUES('a','1')", author="a", message="add")
+        self.assertEqual(len(self.tm.query("SELECT * FROM kv")), 1)
+        # a normal table alongside it still works
+        self.tm.exec_sql("CREATE TABLE ok(id INTEGER PRIMARY KEY, v TEXT)", author="a", message="c2")
+        self.tm.exec_sql("INSERT INTO ok(v) VALUES('y')", author="a", message="add2")
+        self.assertTrue(any(r["tbl"] == "ok" for r in self.tm.log(limit=100)))
+
+    def test_bulk_write_is_fast(self):
+        import time as _t
+        self.tm.exec_sql("CREATE TABLE e(id INTEGER PRIMARY KEY, v INT)", author="l", message="c")
+        t0 = _t.time()
+        self.tm.exec_sql("".join(f"INSERT INTO e(v) VALUES({i});" for i in range(1000)),
+                         author="l", message="bulk")
+        elapsed = _t.time() - t0
+        self.assertEqual(self.tm.stats()["total_changes"], 1000)
+        # with WAL+NORMAL this is well under a second; generous bound for CI
+        self.assertLess(elapsed, 5.0)
 
     def test_schema_blame(self):
         self.tm.exec_sql(

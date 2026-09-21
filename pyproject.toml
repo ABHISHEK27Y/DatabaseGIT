@@ -21,8 +21,9 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-# Only needed for the (optional) PostgreSQL backend.
+# Only needed for the (optional) server backends.
 postgres = ["psycopg[binary]>=3.1"]
+mysql = ["PyMySQL>=1.1"]
 
 [project.scripts]
 dtm = "dtm.cli:main"

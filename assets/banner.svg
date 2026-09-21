@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-label="Database Time Machine">
+  <defs>
+    <style>
+      .serif { font-family: Georgia, 'Times New Roman', serif; }
+      .sans  { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; }
+    </style>
+  </defs>
+
+  <!-- paper -->
+  <rect width="1200" height="300" fill="#f6f4ee"/>
+  <rect x="0" y="0" width="1200" height="300" fill="none" stroke="#e6e2d7" stroke-width="2"/>
+
+  <!-- monogram -->
+  <rect x="72" y="108" width="84" height="84" rx="16" fill="#ffffff" stroke="#1a5f4a" stroke-width="2"/>
+  <text x="114" y="167" text-anchor="middle" class="serif" font-size="52" font-weight="600" fill="#1a5f4a">T</text>
+
+  <!-- wordmark -->
+  <text x="188" y="150" class="serif" font-size="52" font-weight="600" fill="#1c1b18">Database Time Machine</text>
+  <text x="190" y="188" class="sans" font-size="19" letter-spacing="1" fill="#7b786f">Git-style history &amp; time travel for your database</text>
+
+  <!-- feature line -->
+  <text x="190" y="236" class="sans" font-size="14" letter-spacing="1.5" fill="#1a5f4a">
+    TIME TRAVEL  ·  BLAME  ·  REVERT  ·  BRANCH &amp; MERGE  ·  TAMPER-EVIDENT  ·  ZERO DEPENDENCIES
+  </text>
+
+  <!-- git-graph motif -->
+  <g transform="translate(1000,70)">
+    <line x1="20" y1="10" x2="20" y2="170" stroke="#d9d4c6" stroke-width="2"/>
+    <circle cx="20" cy="20"  r="8" fill="#f6f4ee" stroke="#2f7d5b" stroke-width="3"/>
+    <circle cx="20" cy="70"  r="8" fill="#f6f4ee" stroke="#916516" stroke-width="3"/>
+    <circle cx="20" cy="120" r="8" fill="#f6f4ee" stroke="#a23b3b" stroke-width="3"/>
+    <circle cx="20" cy="170" r="8" fill="#f6f4ee" stroke="#2f7d5b" stroke-width="3"/>
+    <rect x="44" y="12"  width="120" height="16" rx="4" fill="#e6e2d7"/>
+    <rect x="44" y="62"  width="150" height="16" rx="4" fill="#e6e2d7"/>
+    <rect x="44" y="112" width="96"  height="16" rx="4" fill="#e6e2d7"/>
+    <rect x="44" y="162" width="134" height="16" rx="4" fill="#e6e2d7"/>
+  </g>
+</svg>
